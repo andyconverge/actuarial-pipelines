@@ -457,14 +457,21 @@ def main_query_run(client):
            )
        print("MYGA LDTI Finished")
     elif client =='Heartland':
+       print('starting Heartland LDTI')
        query = myga_query_adjust('heartland')
        print(query)
-       run_query_and_export(
+       df_main = run_query_and_export(
            query,
            heartland_column,
            "heartland ldti result"
            )
        print("Heartland LDTI Finished")
+       av_query = av_query_adjust('heartland')
+       av_df = run_av_query_and_export(av_query)
+   
+       # Re-export everything in one file including AV
+       export_to_result("Heartland ldti result", df_main, av_df=av_df)
+       
     elif client =='KSKJ':
         print('starting KSKJ LDTI')
         # Main MYGA query

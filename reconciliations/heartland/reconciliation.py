@@ -1,8 +1,6 @@
 import pandas as pd
 from datetime import datetime
-from google.oauth2 import service_account
 from google.cloud import bigquery
-from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 
