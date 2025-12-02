@@ -419,6 +419,7 @@ def run_av_query_and_export(query):
 
 
 def av_query_adjust(client_name):
+    # Query for kskj and heartland
     av_query = f"""
         SELECT 
             set_month, 
@@ -429,7 +430,32 @@ def av_query_adjust(client_name):
         GROUP BY set_month, term
         ORDER BY set_month, term;
     """
-    return av_query
+
+    # ACL MyGA query
+    acl_myga = """
+        SELECT 
+            sv.set_month, 
+            t.term, 
+            COUNT(sv.policy_number) AS ct,
+            SUM(sv.fund_value * 
+                (CASE 
+                    WHEN sv.reins_flag ='P' THEN 0.65 
+                    ELSE 0.40 
+                 END)) AS net_fund_value
+        FROM `aclico.seriatim_values` sv
+        JOIN `aclico.term_table` t ON sv.plan = t.plan
+        WHERE sv.set_month >= "202401"
+        GROUP BY sv.set_month, t.term
+        ORDER BY sv.set_month, t.term;
+    """
+
+    # Correct conditional return
+    if client_name in ["kskj", "heartland"]:
+        return av_query
+    elif client_name == "acl_myga":
+        return acl_myga
+    else:
+        raise ValueError(f"Unknown client_name: {client_name}")
 
 
 def main_query_run(client):
@@ -450,12 +476,17 @@ def main_query_run(client):
        query = acl_myga_query()
        print('test')
        print(query)
-       run_query_and_export(
+       df_main= run_query_and_export(
            query,
            new_pol_columns,
            "acl_myga ldti result"
            )
-       print("MYGA LDTI Finished")
+       av_query = av_query_adjust('acl_myga')
+       av_df = run_av_query_and_export(av_query)
+   
+       # Re-export everything in one file including AV
+       export_to_result("ACL MYGA ldti result", df_main, av_df=av_df)
+       print("MYGA LDTI/AV Finished")
     elif client =='Heartland':
        print('starting Heartland LDTI')
        query = myga_query_adjust('heartland')
