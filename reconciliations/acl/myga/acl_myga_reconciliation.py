@@ -7,7 +7,7 @@ CREDS = '../../converge-database-0331482f2ee5.json'
 
 client = bigquery.Client.from_service_account_json(json_credentials_path=CREDS)
 
-
+result_df = pd.DataFrame()
 
 def get_previous_month(set_month):
     # Parse the set_month string into a datetime object
@@ -101,7 +101,7 @@ def run_reconciliation(set_month):
     
     withdrawal_type = ['full_surrenders', 'partial_surrenders', 'aiw', 'rmd', 'cancellations', 'surrender_fees', 'penalty_free', 'death_claims', 'premium', 'premium_taxes']
 
-    result_df = pd.DataFrame()
+    
     prev_month = get_previous_month(set_month)
     expenses(set_month, prev_month)
     for i in withdrawal_type:
@@ -110,4 +110,4 @@ def run_reconciliation(set_month):
     
     print("END -------------------")
     
-    result_df.to_excel('MYGA_reconciliations_'+str(set_month)+'.xlsx', index=False)
+    result_df.to_excel('Query Results/reconciliations/MYGA_reconciliations_'+str(set_month)+'.xlsx', index=False)
