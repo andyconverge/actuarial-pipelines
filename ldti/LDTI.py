@@ -482,7 +482,7 @@ def main_query_run(client):
         # Re-export everything in one file including AV
         export_to_result("KSKJ ldti result", df_main, av_df=av_df)
     
-        print("KSKJ LDTI Finished")
+        print("KSKJ LDTI Finished with AV")
     elif client =="ACL Life":
         print('starting ACL Life LDTI')
         query = life_query_run()
