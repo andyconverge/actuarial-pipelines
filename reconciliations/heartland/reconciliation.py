@@ -9,7 +9,6 @@ from dateutil.relativedelta import relativedelta
 CREDS = '../converge-database-0331482f2ee5.json'
 client = bigquery.Client.from_service_account_json(json_credentials_path=CREDS)
 
-
 def query_function(set_month, plangroup, tablename, fieldname, withdrawal_type):
     
     if tablename =='premium':

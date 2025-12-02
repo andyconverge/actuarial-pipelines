@@ -4,10 +4,8 @@ from google.oauth2 import service_account
 from google.cloud import bigquery
 from dateutil.relativedelta import relativedelta
 
-
 CREDS = '../converge-database-0331482f2ee5.json'
 client = bigquery.Client.from_service_account_json(json_credentials_path=CREDS)
-set_month = "202510"
 
 plangroup = ['MYG03', 'MYG04', 'MYG05',
              'MYG06', 'MYG07', 'MYG08', 'MYG09', 'MYG10']
@@ -106,7 +104,9 @@ def other(set_month, plangroup, typeres):
 
 
 def run_reconciliation(set_month):
+    print("Starting the program \n")
     print("Running reconciliation for KSKJ", set_month)
+    
     result_df = pd.DataFrame()
 
     for i in plangroup:
