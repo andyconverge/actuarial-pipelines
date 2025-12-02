@@ -473,8 +473,8 @@ def main_query_run(client):
             )
         
     elif client == 'ACL MYGA':
+       print('starting ACL MYGA')
        query = acl_myga_query()
-       print('test')
        print(query)
        df_main= run_query_and_export(
            query,
@@ -483,9 +483,9 @@ def main_query_run(client):
            )
        av_query = av_query_adjust('acl_myga')
        av_df = run_av_query_and_export(av_query)
-   
+       
        # Re-export everything in one file including AV
-       export_to_result("ACL MYGA ldti result", df_main, av_df=av_df)
+       export_to_result("acl_myga ldti result", df_main, av_df=av_df)
        print("MYGA LDTI/AV Finished")
     elif client =='Heartland':
        print('starting Heartland LDTI')
