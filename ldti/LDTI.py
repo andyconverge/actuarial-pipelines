@@ -444,12 +444,30 @@ def av_query_adjust(client_name):
         GROUP BY sv.set_month, t.term
         ORDER BY sv.set_month, t.term;
     """
+    farmers_myga ="""
+        #Farmers MYGA
+    SELECT set_month, term, SUM(current_balance) as net_balance from `farmers.seriatim_new`
+    GROUP by set_month, term
+    ORDER by set_month, term;
+    """
+    
+    farmers_fia = """
+        select set_month, plan, SUM(mcurrbal*converge_qs) as total_av from `farmers_fia.seriatim`
+    WHERE current_status='Active' and converge_qs >0
+    GROUP by set_month, plan
+    ORDER by set_month, plan;
 
+        
+    """
     # Correct conditional return
     if client_name in ["kskj", "heartland"]:
         return av_query
     elif client_name == "acl_myga":
         return acl_myga
+    elif client_name == "farmers_myga":
+        return farmers_myga
+    elif client_name == "farmers_fia":
+        return farmers_fia
     else:
         raise ValueError(f"Unknown client_name: {client_name}")
 
