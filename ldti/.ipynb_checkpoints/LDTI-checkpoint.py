@@ -138,29 +138,31 @@ def farmers_query(product):
 WITH min_set_month AS(
           select mpolicy, MIN(set_month) as first_set_month,
           LEFT(reported_date,4) AS report_year,
-          FROM `farmers.seriatim_new`
+          FROM `farmers.seriatim_new` 
+          WHERE converge_qs>0 and LEFT(mpolicy,1) <> 'R'
           GROUP by mpolicy, report_year
         ),
         inforce_list AS (
          select mpolicy, set_month, LEFT(reported_date,4) AS report_year
           FROM `farmers.seriatim_new` s
-          WHERE current_status='Active' AND mpolicy NOT IN (Select policy_number from `farmers.full_surrender` f WHERE f.set_month <=s.set_month)
+          WHERE current_status='Active' AND converge_qs >0 AND LEFT(mpolicy,1) <> 'R' 
         ),
         old_min_set_month AS(
           select policy_number, MIN(set_month) as first_set_month,
-          LEFT(reported_date,4) AS report_year,
+          LEFT(reported_date,4) AS report_year
           FROM `farmers.seriatim`
+          WHERE quota_share>0
           GROUP by policy_number, report_year
         ),
         old_inforce_list AS (
          select set_month, LEFT(reported_date,4) AS report_year, COUNT(distinct policy_number) as ct_inforce
           FROM `farmers.seriatim`
-          WHERE gross_account_value>0
+          WHERE gross_account_value>0 and quota_share>0
           GROUP by set_month,report_year
         )
     
         SELECT il.set_month, il.report_year, count(il.mpolicy) as ct_inforce, (SELECT count(m.mpolicy) from min_set_month m WHERE m.first_set_month = il.set_month AND m.report_year =il.report_year) as new_issued_policies From inforce_list il
-          WHERE il.set_month <> '202506'
+          WHERE il.set_month <> '202506' 
         GROUP by il.set_month, il.report_year
   
         UNION ALL
@@ -183,8 +185,8 @@ WITH min_set_month AS(
         SUM(CASE WHEN reported_date = sn.set_month THEN 1 ELSE 0 END) AS new_issued_policies,
         
       FROM `farmers.seriatim_new` sn
-      WHERE sn.set_month = '202506'
-        AND current_status = 'Active' AND sn.mpolicy NOT IN (Select policy_number from `farmers.full_surrender` f WHERE f.set_month <='202506')
+      WHERE sn.set_month = '202506' and converge_qs >0
+        AND current_status = 'Active' 
       GROUP BY set_month, report_year
       ORDER BY set_month, report_year;
     '''
@@ -204,7 +206,7 @@ WITH min_set_month AS(
                 LEFT(sv.reported_date, 4) as report_year,
                 COUNT(DISTINCT sv.policy_id) AS ct_inforce
               FROM `farmers_fia.rsv` sv
-              WHERE sv.gross_account_value > 0 
+              WHERE sv.gross_account_value > 0 AND converge_qs>0
               GROUP BY sv.set_month, report_year
             )
     
@@ -444,12 +446,30 @@ def av_query_adjust(client_name):
         GROUP BY sv.set_month, t.term
         ORDER BY sv.set_month, t.term;
     """
+    farmers_myga ="""
+        #Farmers MYGA
+    SELECT set_month, term, SUM(current_balance) as net_balance from `farmers.seriatim_new`
+    GROUP by set_month, term
+    ORDER by set_month, term;
+    """
+    
+    farmers_fia = """
+        select set_month, plan, SUM(mcurrbal*converge_qs) as total_av from `farmers_fia.seriatim`
+    WHERE current_status='Active' and converge_qs >0
+    GROUP by set_month, plan
+    ORDER by set_month, plan;
 
+        
+    """
     # Correct conditional return
     if client_name in ["kskj", "heartland"]:
         return av_query
     elif client_name == "acl_myga":
         return acl_myga
+    elif client_name == "farmers_myga":
+        return farmers_myga
+    elif client_name == "farmers_fia":
+        return farmers_fia
     else:
         raise ValueError(f"Unknown client_name: {client_name}")
 
