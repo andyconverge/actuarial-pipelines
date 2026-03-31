@@ -487,6 +487,8 @@ def main_query_run(client):
                 new_pol_columns,
                 f"silac ldti result_{i}"
             )
+            av_query = silac_av_query(i)
+            av_df = run_av_query_and_export(av_query)
         
     elif client == 'ACL MYGA':
        print('starting ACL MYGA')
