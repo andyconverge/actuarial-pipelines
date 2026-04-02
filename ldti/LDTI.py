@@ -400,21 +400,33 @@ def export_to_result (excel_name, df, av_df=None):
 
     print("Data exported successfully :", excel_name)
     
-def run_query_and_export(query, columns, export_name):
+def run_query(query, columns):
     """Runs a query, converts results to a DataFrame, and exports it."""
     result = client.query(query)
     rows = [list(row) for row in result.result()]
     print(rows)
     df = pd.DataFrame(rows, columns=columns)
-    export_to_result(export_name, df)
     return df
 
-def run_av_query_and_export(query):
+def run_av_query(query, product):
+
     result = client.query(query)
     rows = [list(row) for row in result.result()]
-    df = pd.DataFrame(rows, columns=["set_month", "term", "ct", "net_fund_value"])
+    if product =='myga':
+        df = pd.DataFrame(rows, columns=["set_month", "term", "ct", "net_fund_value"])
+    if product =='silac':
+        df = pd.DataFrame(rows, columns=["set_month", "plan","net_av"])
     return df
 
+def run_query_and_export(query, columns, export_name, av_query=None, product=None):
+    df = run_query(query, columns)
+
+    av_df = None
+    if av_query is not None and product is not None:
+        av_df = run_av_query(av_query, product)
+
+    export_to_result(export_name, df, av_df)
+    return df, av_df
 
 def av_query_adjust(client_name):
     # Query for kskj and heartland
@@ -448,13 +460,13 @@ def av_query_adjust(client_name):
     """
     farmers_myga ="""
         #Farmers MYGA
-    SELECT set_month, term, SUM(current_balance) as net_balance from `farmers.seriatim_new`
+    SELECT set_month, term,COUNT(mpolicy) AS ct, SUM(current_balance) as net_balance from `farmers.seriatim_new`
     GROUP by set_month, term
     ORDER by set_month, term;
     """
     
     farmers_fia = """
-        select set_month, plan, SUM(mcurrbal*converge_qs) as total_av from `farmers_fia.seriatim`
+        select set_month, plan,COUNT(mpolicy) AS ct, SUM(mcurrbal*converge_qs) as total_av from `farmers_fia.seriatim`
     WHERE current_status='Active' and converge_qs >0
     GROUP by set_month, plan
     ORDER by set_month, plan;
@@ -482,62 +494,63 @@ def main_query_run(client):
         for i in ['D%', 'T%']:
             fia_query = silac_query_adjust(i)
             print(fia_query)
-            run_query_and_export(
-                fia_query,
-                new_pol_columns,
-                f"silac ldti result_{i}"
-            )
             av_query = silac_av_query(i)
-            av_df = run_av_query_and_export(av_query)
-        
+            print(av_query)
+            df, av_df = run_query_and_export(
+                query=fia_query,
+                columns=new_pol_columns,
+                export_name= f"Results/LDTI/silac ldti result_{i}",
+                av_query=av_query,
+                product="silac"
+            )
+            
     elif client == 'ACL MYGA':
        print('starting ACL MYGA')
        query = acl_myga_query()
-       print(query)
-       df_main= run_query_and_export(
-           query,
-           new_pol_columns,
-           "acl_myga ldti result"
-           )
        av_query = av_query_adjust('acl_myga')
-       av_df = run_av_query_and_export(av_query)
+       print(query)
+
+       df, av_df = run_query_and_export(
+           query=query,
+           columns=new_pol_columns,
+           export_name= f"Query Results/LDTI/acl_myga_ldti",
+           av_query=av_query,
+           product="myga"
+       )
+       
+       av_df = run_av_query(av_query, 'myga')
        
        # Re-export everything in one file including AV
-       export_to_result("acl_myga ldti result", df_main, av_df=av_df)
+       #export_to_result("acl_myga ldti result", df_main, av_df=av_df)
        print("MYGA LDTI/AV Finished")
     elif client =='Heartland':
        print('starting Heartland LDTI')
        query = myga_query_adjust('heartland')
-       print(query)
-       df_main = run_query_and_export(
-           query,
-           heartland_column,
-           "heartland ldti result"
-           )
-       print("Heartland LDTI Finished")
        av_query = av_query_adjust('heartland')
-       av_df = run_av_query_and_export(av_query)
-   
-       # Re-export everything in one file including AV
-       export_to_result("Heartland ldti result", df_main, av_df=av_df)
+       print(query)
+  
+       df, av_df = run_query_and_export(
+           query=query,
+           columns=heartland_column,
+           export_name= f"Query Results/LDTI/heartland_ldti",
+           av_query=av_query,
+           product="myga"
+       )
+       print("Heartland LDTI Finished")
        
     elif client =='KSKJ':
         print('starting KSKJ LDTI')
         # Main MYGA query
         query = myga_query_adjust('kskj')
-        df_main = run_query_and_export(
-            query,
-            heartland_column,
-            "KSKJ ldti result"  # Will save to KSKJ ldti result.xlsx
-        )
-    
-        # AV query
         av_query = av_query_adjust('kskj')
-        av_df = run_av_query_and_export(av_query)
-    
-        # Re-export everything in one file including AV
-        export_to_result("KSKJ ldti result", df_main, av_df=av_df)
-    
+        df, av_df = run_query_and_export(
+            query=query,
+            columns=heartland_column,
+            export_name= f"Query Results/LDTI/kskj_ldti",
+            av_query=av_query,
+            product="myga"
+        )
+
         print("KSKJ LDTI Finished with AV")
     elif client =="ACL Life":
         print('starting ACL Life LDTI')
@@ -548,23 +561,27 @@ def main_query_run(client):
     elif client =='Farmers MYGA':
         print('starting Farmers MYGA test')
         query = farmers_query('myga')
-        print(query, 'check\n')
-        run_query_and_export(
-            query,
-            new_pol_columns,
-            "Farmers MYGA ldti result"
-            )
+        av_query = av_query_adjust('farmers_myga')
+        df, av_df = run_query_and_export(
+            query=query,
+            columns=new_pol_columns,
+            export_name= f"Query Results/LDTI/farmers_myga_ldti",
+            av_query=av_query,
+            product="myga"
+        )
         print('Farmers MYGA done')
     elif client =='Farmers FIA':
         print('starting Farmers FIA')
         query = farmers_query('FIA')
-        run_query_and_export(
-            query,
-            new_pol_columns,
-            "Farmers FIA ldti result"
-            )
+        av_query = av_query_adjust('farmers_fia')
+        df, av_df = run_query_and_export(
+            query=query,
+            columns=new_pol_columns,
+            export_name= f"Query Results/LDTI/farmers_fia_ldti",
+            av_query=av_query,
+            product="myga"
+        )
         print('Farmers FIA done')
-        
-    
+
 #This part is not done. I need to add Account Value calculation on a separate sheet. 
 #ADD ACCOUNT VALUE RUN AS WELL and add rest of the clients. If case statement. 
