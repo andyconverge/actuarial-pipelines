@@ -3,3 +3,6 @@ pandas
 python-dateutil
 google-cloud-bigquery
 google-auth
+pandas>=1.5
+pytest>=7.0
+flake8
