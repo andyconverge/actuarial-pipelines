@@ -522,6 +522,7 @@ def main_query_run(client):
        
        # Re-export everything in one file including AV
        #export_to_result("acl_myga ldti result", df_main, av_df=av_df)
+       # test comment
        print("MYGA LDTI/AV Finished")
     elif client =='Heartland':
        print('starting Heartland LDTI')
