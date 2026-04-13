@@ -1,8 +1,15 @@
+<<<<<<< ours
 
+=======
+# Python dependencies for actuarial pipelines
+>>>>>>> theirs
 pandas
 python-dateutil
 google-cloud-bigquery
 google-auth
+<<<<<<< ours
 pandas>=1.5
 pytest>=7.0
 flake8
+=======
+>>>>>>> theirs
