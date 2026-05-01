@@ -162,7 +162,7 @@ def run_reconciliation(set_month):
         result_df = pd.concat([result_df, pd.DataFrame(
             [other(set_month, i, 'policy_deduction')])], ignore_index=True)
     print("exporting the result")
-    result_df.to_excel('Query Result/KSKJ_reconciliation_result_' +
+    result_df.to_excel('Query Results/KSKJ_reconciliation_result_' +
                        str(set_month)+'.xlsx', index=False);
     
     
