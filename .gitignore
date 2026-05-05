@@ -22,6 +22,9 @@ dist/
 .DS_Store
 Thumbs.db
 
+# GCP service account credentials
+*.json
+
 # pytest cache
 .pytest_cache/
 
