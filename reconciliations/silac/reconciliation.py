@@ -387,6 +387,6 @@ def run_reconciliation(set_month):
     commission(set_month, product_type)
     part_h(set_month, product_type)
     print('-----------------------------------------------')
-  result_df.to_excel('Query Requests/Reconciliations/SILAC_reconciliation_result_'+set_month+'.xlsx', index=False)
+  result_df.to_excel('Results/Reconciliations/SILAC_reconciliation_result_'+set_month+'.xlsx', index=False)
   print('end')
   return result_df
