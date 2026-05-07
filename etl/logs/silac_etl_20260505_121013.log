@@ -1,12 +1,0 @@
-2026-05-05 12:10:13,582 | INFO | Logging started: logs\silac_etl_20260505_121013.log
-2026-05-05 12:10:13,623 | INFO | Reading workbook: I:\New Structure\Actuarial New\Database\SILAC Settlements\2026\202601 Converge Denali Settlement file.xlsx
-2026-05-05 12:13:12,988 | INFO | Workbook loaded successfully.
-2026-05-05 12:13:13,438 | INFO | Derived set_month=202601 | product_like=D%
-2026-05-05 12:13:13,791 | INFO | Uploading policy (75749 rows)
-2026-05-05 12:13:17,114 | WARNING | Compute Engine Metadata server unavailable on attempt 1 of 3. Reason: timed out
-2026-05-05 12:13:20,128 | WARNING | Compute Engine Metadata server unavailable on attempt 2 of 3. Reason: timed out
-2026-05-05 12:13:23,130 | WARNING | Compute Engine Metadata server unavailable on attempt 3 of 3. Reason: timed out
-2026-05-05 12:13:23,130 | WARNING | Authentication failed using Compute Engine authentication due to unavailable metadata server.
-2026-05-05 12:13:29,417 | INFO | 75749 out of 75749 rows loaded.
-2026-05-05 12:13:29,417 | INFO | Upload complete for policy in 15.63 seconds
-2026-05-05 12:13:29,536 | INFO | Uploading seriatim_values (75749 rows)
