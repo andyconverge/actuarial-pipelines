@@ -24,7 +24,7 @@ def parse_year_month(date_str):
 def create_query(month, product):
     if product =='myga':
         query = f'''
-        #DECLARE month STRING DEFAULT "202508";
+        DECLARE month STRING DEFAULT "202508";
 
         #Part 1 inforce policies
 
@@ -33,7 +33,7 @@ def create_query(month, product):
         #-------------------------------------------------------------#
 
         WITH death_list as (
-        select policy_number, (SELECT max(set_month) from `farmers.seriatim`  WHERE policy_number = d.policy_number GROUP by policy_number) as set_month, d.quotashare, net_amount from `farmers.death_claims` d WHERE set_month = {month}
+        select policy_number, (SELECT max(set_month) from `farmers.seriatim`  WHERE policy_number = d.policy_number GROUP by policy_number) as set_month, d.quotashare, net_amount from `farmers.death_claims` d WHERE set_month = month
         )
 
         SELECT 
@@ -93,8 +93,7 @@ def create_query(month, product):
             FROM `farmers.seriatim_new` f1
             WHERE f1.set_month = "{month}"
         ) f1 ON f.mpolicy = f1.mpolicy
-        WHERE f.set_month = "{get_previous_month(month)}" and f1.mpolicy is not NULL AND f1.current_status ='Active' 
-        
+        WHERE f.set_month = "{get_previous_month(month)}" and f1.mpolicy is not NULL AND f1.current_status ='Active' AND f1.spousal_cont = 0
 
         UNION ALL
         #new policies
@@ -237,7 +236,7 @@ def create_query(month, product):
         ################################################
         #Re-useing the MYGA AVRF query.
 
-        #DECLARE month STRING DEFAULT "202508";
+        DECLARE month STRING DEFAULT "202508";
 
         #Part 1 inforce policies
 
@@ -248,7 +247,7 @@ def create_query(month, product):
 
         WITH death_list as (
         #policy claims are always delayed. This CTE query will find the latest inforce set_month for died policies,
-        select policy_number, (SELECT max(set_month) from `farmers_fia.seriatim`  WHERE mpolicy = d.policy_number AND current_status='Active' GROUP by mpolicy) as set_month, d.quotashare, net_amount from `farmers_fia.death_claims` d WHERE set_month = {month}
+        select policy_number, (SELECT max(set_month) from `farmers_fia.seriatim`  WHERE mpolicy = d.policy_number AND current_status='Active' GROUP by mpolicy) as set_month, d.quotashare, net_amount from `farmers_fia.death_claims` d WHERE set_month = month
         )
 
         SELECT 
@@ -308,7 +307,7 @@ def create_query(month, product):
             FROM `farmers_fia.seriatim` f1
             WHERE f1.set_month = "{month}"
         ) f1 ON f.mpolicy = f1.mpolicy
-        WHERE f.set_month = "{get_previous_month(month)}" AND f1.current_status ='Active' AND f.converge_qs >0
+        WHERE f.set_month = "{get_previous_month(month)}" AND f1.current_status ='Active' AND f1.spousal_cont = 0 AND f.converge_qs >0
 
         UNION ALL
         #new policies checks by listing policies exists current month don't exist prev month
