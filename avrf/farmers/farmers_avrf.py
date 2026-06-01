@@ -33,7 +33,7 @@ def create_query(month, product):
         #-------------------------------------------------------------#
 
         WITH death_list as (
-        select policy_number, (SELECT max(set_month) from `farmers.seriatim`  WHERE policy_number = d.policy_number GROUP by policy_number) as set_month, d.quotashare, net_amount from `farmers.death_claims` d WHERE set_month = {month}
+        select policy_number, (SELECT max(set_month) from `farmers.seriatim`  WHERE policy_number = d.policy_number GROUP by policy_number) as set_month, d.quotashare, net_amount from `farmers.death_claims` d WHERE set_month = "{month}"
         )
 
         SELECT 
@@ -248,7 +248,7 @@ def create_query(month, product):
 
         WITH death_list as (
         #policy claims are always delayed. This CTE query will find the latest inforce set_month for died policies,
-        select policy_number, (SELECT max(set_month) from `farmers_fia.seriatim`  WHERE mpolicy = d.policy_number AND current_status='Active' GROUP by mpolicy) as set_month, d.quotashare, net_amount from `farmers_fia.death_claims` d WHERE set_month = {month}
+        select policy_number, (SELECT max(set_month) from `farmers_fia.seriatim`  WHERE mpolicy = d.policy_number AND current_status='Active' GROUP by mpolicy) as set_month, d.quotashare, net_amount from `farmers_fia.death_claims` d WHERE set_month = "{month}"
         )
 
         SELECT 
