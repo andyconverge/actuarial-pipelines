@@ -93,7 +93,7 @@ def create_query(month, product):
             FROM `farmers.seriatim_new` f1
             WHERE f1.set_month = "{month}"
         ) f1 ON f.mpolicy = f1.mpolicy
-        WHERE f.set_month = "{get_previous_month(month)}" and f1.mpolicy is not NULL AND f1.current_status ='Active' 
+        WHERE f.set_month = "{get_previous_month(month)}" and f1.mpolicy is not NULL AND f1.current_status ='Active' and f1.spousal_cont = 0
         
 
         UNION ALL
@@ -308,7 +308,7 @@ def create_query(month, product):
             FROM `farmers_fia.seriatim` f1
             WHERE f1.set_month = "{month}"
         ) f1 ON f.mpolicy = f1.mpolicy
-        WHERE f.set_month = "{get_previous_month(month)}" AND f1.current_status ='Active' AND f.converge_qs >0
+        WHERE f.set_month = "{get_previous_month(month)}" AND f1.current_status ='Active' AND f1.spousal_cont = 0 AND f.converge_qs >0
 
         UNION ALL
         #new policies checks by listing policies exists current month don't exist prev month
