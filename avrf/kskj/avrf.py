@@ -396,7 +396,7 @@ def create_query(month, dataset='kskj'):
       IFNULL(sv_drop.stat_reserve * {qs}, 0)                           AS beginning_reserve_stat,
       0                                                                 AS end_reserve_stat,
  
-      0                                                              AS new_policy_check,
+      '2'                                                               AS new_policy_check,  -- '2' = dropped
       1                                                                 AS dropped_policy_check,
       sv_drop.plan,
       sv_drop.plangroup
@@ -464,8 +464,8 @@ def run_avrf_analysis(set_month, dataset='kskj'):
         'freelook_withdrawals', 'cancellation_withdrawals',
         'Death Benefit', 
         'free_partial_withdrawals', 'partial_withdrawal_with_sc',
-        'full_surrender_withdrawals', 'internal_reissues_withdrawals',
-        'surrender_charges', 'expense_charges',
+        'full_surrender_withdrawals', 'internal_reissues_withdrawals'
+        
     ]
     df['outflow'] = df[outflow_cols].sum(axis=1).abs()
 
