@@ -156,7 +156,7 @@ def create_query(month, dataset='kskj'):
       ON sv_bom.policy_number = sv_eom.policy_number
      AND sv_eom.set_month = '{month}'
  
-    WHERE sv_bom.set_month = '{beginning_month}'
+    WHERE sv_bom.set_month = '{beginning_month}' and sv_eom.eom_fund_value > 0
  
     -- ----------------------------------------------------------------
     -- SECTION 2: NEW POLICIES
