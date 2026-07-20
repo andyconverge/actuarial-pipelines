@@ -33,7 +33,8 @@ def create_query(month, product):
         #-------------------------------------------------------------#
 
         WITH death_list as (
-        select policy_number, (SELECT max(set_month) from `farmers.seriatim`  WHERE policy_number = d.policy_number GROUP by policy_number) as set_month, d.quotashare, net_amount from `farmers.death_claims` d WHERE set_month = "{month}"
+        select policy_number, (SELECT max(set_month) from `farmers.seriatim`  WHERE policy_number = d.policy_number GROUP by policy_number) as set_month, mAX(d.quotashare) as quotashare, SUM(net_amount) as net_amount from `farmers.death_claims` d WHERE set_month = "{month}"
+        GROUP BY policy_number
         )
 
         SELECT 
