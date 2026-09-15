@@ -460,7 +460,7 @@ def av_query_adjust(client_name):
     """
     farmers_myga ="""
         #Farmers MYGA
-    SELECT set_month, term,COUNT(mpolicy) AS ct, SUM(current_balance) as net_balance from `farmers.seriatim_new`
+     SELECT set_month, term,COUNT(mpolicy) AS ct, SUM(mcurrbal*converge_qs) as net_balance from `farmers.seriatim_new`
     GROUP by set_month, term
     ORDER by set_month, term;
     """
@@ -560,7 +560,7 @@ def main_query_run(client):
         life_query_run()
         print("ACL Life LDTI Finished")
     elif client =='Farmers MYGA':
-        print('starting Farmers MYGA test')
+        print('starting Farmers MYGA')
         query = farmers_query('myga')
         av_query = av_query_adjust('farmers_myga')
         df, av_df = run_query_and_export(

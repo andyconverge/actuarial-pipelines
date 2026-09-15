@@ -307,7 +307,7 @@ def create_query(month, dataset='kskj'):
  
       -- No new premium for a dropped policy
       0                                                                 AS premium,
-      sv_drop.interest_credited                                         AS interest_credited,
+      cur.interest_credited                                         AS interest_credited,
       0                                                                 AS bonus_credited,
  
       IFNULL((

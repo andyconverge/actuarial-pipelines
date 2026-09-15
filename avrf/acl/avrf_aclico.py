@@ -1,100 +1,77 @@
-"""ACLICO / MYGA AVRF analysis.
+"""ACLICO / MYGA AVRF analysis with management summary and break classification.
 
-    df = run_avrf_analysis('202607')
+WHAT CHANGED IN THIS VERSION
+============================
+The 202607 run showed a $11,695,403.87 break that decomposed completely:
 
-A policy is FLAGGED when its AV roll-forward does not tie:
+    A. Recaptured                                112 policies   -4,765,287.39
+    B. Left extract - no claim activity          194 policies   -6,937,208.29
+    C. In extract - reversal (abs() bug)           4 policies       +7,091.81
+                                                                ---------------
+                                                                -11,695,403.87
 
-    inflow  = premium + interest_earned
-    outflow = full_surrender + cancellation + aiw + rmd + penalty_free
-              + partial_surrender + death_claims
-    exp_av  = beginning_fund_value + inflow - outflow
-    diff    = end_fund_value - exp_av        flagged when |diff| > 0.005
+None of it was a data error. It was AV leaving the ceded block through routes
+the roll-forward had no column for. So the roll-forward now has columns for
+them, and the summary reports a bridge instead of one undifferentiated break.
 
-A flagged policy then splits two ways, and only one of them is work:
+1. THE QUERY IS NOW THREE EXPLICIT SECTIONS (as in the Heartland version)
+   rather than one section that let departures fall out through IFNULL:
+     1 - in both months
+     2 - new issues this month
+     3 - in the prior month, ABSENT from the current extract
+   Section 3 carries val_code and reins_flag forward from the prior month, so
+   departures arrive identifiable instead of as rows of NULLs. The population
+   is unchanged, so totals are comparable to the previous version.
 
-    is_recaptured = TRUE   explained. The policy left the ceded block because
-                           the cession changed, not because the fund paid out.
-                           No claim exists and none should.
-    is_recaptured = FALSE  NEEDS REVIEW. Look at it by hand.
+2. txn_count IS RETURNED PER POLICY. This is the column that answers "why did
+   it drop". A policy with left_extract = 1 and txn_count = 0 left the block
+   with no claim recorded anywhere - the exception list that needs ACL
+   follow-up. No cross-reference to the settlement workbook required.
 
-surrender_fees is excluded from outflow - it is a charge, not a fund movement.
-Confirmed for 202607: withdrawals-only ties to 0.00, while including surrender
-fees breaks 32 policies by 23,316.43.
+3. .abs() IS GONE from inflow and outflow. It silently flipped the sign of a
+   reversal: when a withdrawal is refunded the cumulative-withdrawal delta
+   goes negative, and abs() turned money coming back IN into money going OUT,
+   a double-counted error of 2x the reversal. That was the whole of category C.
+   Only 4 of 16,308 policies had a reversal in 202607, so this is rare but it
+   is pure error when it happens.
 
-RECAPTURE
-=========
-Sourced from `aclico.recaptures`, joined on policy_number, restricted to
-renew_date on or before the month end being reported. recaptured_av on that
-table is already at the Converge share (gross AV at renewal x quota share), so
-it needs no further scaling here.
+4. THE QUOTA SHARE IS NOW BOUND CONSISTENTLY. Previously the premium and
+   interest subqueries used an unqualified quota_share(reins_flag), which
+   binds to the INNER table's flag, while the subtracted term used the outer
+   row's. A policy whose flag moved between "P" and anything else was having a
+   0.40 figure subtracted from a 0.65 one. (Verified zero flag changes among
+   202607 survivors, so this did not bite that month - but it is a live trap.)
 
-Recapture is NOT treated as an outflow and does NOT enter exp_av. The fund did
-not pay out - the cession changed - so folding it into the roll-forward would
-misstate what the policyholder's money did. It is a label on the difference,
-not a component of it. Whether the treaty should account for it differently is
-a question for the team, and changing that is a change to exp_av, not to the
-join.
+5. CORRELATED SUBQUERIES REPLACED BY CTEs. Eight transaction tables scanned
+   once each and pivoted, instead of one correlated subquery per column per
+   row. Cheaper, and it makes the quota-share application visible in one place.
 
-If your column names differ from the ones below, the `recapture` CTE is the
-only place to edit:
-    policy_number, renew_date, recaptured_av
+VALIDATION ANCHORS (202607) - re-run these each month
+=====================================================
+  * Ceded stat reserve in the seriatim must tie to the settlement sheet:
+      June 355,647,773.25 = settlement BOM;  July 337,859,119.08 = EOM. Both
+      tied to the cent.
+  * The identity Fund Value = Purchase Price + Interest Earned - Withdrawals
+      held for all 15,996 July rows (max residual 2e-10). Withdrawals is
+      cumulative inception-to-date, which is why premium and interest are
+      computed as current-minus-prior deltas.
+  * quota_share is correct: Ceded Stat Res / Stat Reserve is exactly 0.65 for
+      reins_flag "P" and exactly 0.40 for V / 3D / AF / 3C, zero variance.
+      Do NOT use the Reins Pct column (0.9 / 0.4) - that is ACL's own
+      cession, not the Converge share.
 
-WHAT EACH FLAGGED ROW CARRIES
-=============================
-  is_recaptured   TRUE when `aclico.recaptures` has a row for this policy
-                  effective on or before month end.
-  recapture_date  the renewal date the recapture took effect.
-  recaptured_av   Converge share of the AV recaptured.
-  left_extract    1 = no seriatim row this month; the policy is gone.
-  txn_count       transaction rows across all eight claims tables. 0 = no
-                  claim recorded anywhere.
-  status          Existing / New / Run-off in extract / Left extract.
-                  "Run-off in extract" = still listed but AV went to zero,
-                  i.e. a full surrender that stays on the seriatim.
-  val_code, reins_flag, qs   carried forward from the prior month for
-                  departures, so the row is identifiable rather than NULLs.
-
-WHAT 202607 LOOKED LIKE, for comparison next month
-==================================================
-  Total difference                  -11,702,495.68
-  Policies flagged                             306
-    of which recaptured                        306
-    NEEDS REVIEW                                 0
-
-  Every policy present in both months reconciled to 0.00. The entire
-  difference was departures, and all 306 are covered by the recapture table
-  (194 from the Jan-Jun Policy List backlog, 112 from the July settlement tab,
-  less the ones whose June AV was already zero).
-
-FIXES CARRIED IN THIS VERSION
-=============================
-1. Three explicit query sections instead of one that let departures fall out
-   through IFNULL: in both months / new this month / left the extract.
-2. txn_count and left_extract returned per policy.
-3. .abs() removed from inflow and outflow. It flipped the sign of a reversal -
-   when a withdrawal is refunded the cumulative delta goes negative, and abs()
-   turned money coming back IN into money going OUT, double-counting the
-   error. That was 4 policies and $7,091.81 of the 202607 break.
-4. quota_share bound consistently to the outer row's reins_flag. Previously
-   the premium and interest subqueries used an unqualified quota_share(
-   reins_flag) that bound to the inner table, so a policy whose flag moved
-   between "P" and anything else had a 0.40 figure subtracted from a 0.65 one.
-5. Correlated subqueries replaced by CTEs.
-6. Recapture joined from `aclico.recaptures`.
-
-NOTES ON THE DATA
-=================
-  * purchase_price and interest_earned are cumulative inception-to-date, so
-    premium and interest are current-minus-prior deltas. They can legitimately
-    be negative when a transaction is reversed - never wrap them in abs().
-  * quota share is 0.65 for reins_flag "P" and 0.40 for V / 3D / AF / 3C.
-    Verified against Ceded Stat Res / Stat Reserve with zero variance. Do NOT
-    use the Reins Pct column (0.9 / 0.4) - that is ACL's own cession, not the
-    Converge share.
-  * A policy that is recaptured but still present in the extract is possible -
-    the settlement workbook shows cession dropping 0.9 -> 0.25 rather than to
-    zero on some policies. summarize_avrf() counts these and warns; they are
-    worth querying with ACL rather than ignoring.
+STILL OPEN - do not assert these to the team as settled
+=======================================================
+  * Category B is labelled "no claim activity", not "non-renewal". The
+    settlement sheet's "Decrease from Non-Renewals (gross of SC)" line is
+    -5,136,540.59 ceded, while those policies carry 7,224,880.56 of June
+    ceded stat reserve. The renewal dates (all on or before month end, issue
+    years clustered at 2016 and 2019) point at maturities, but the amounts do
+    not tie. Ask ACL to confirm the disposition of the policies on the
+    exception list.
+  * Recapture is treated as its own bridge line, not as an outflow, because
+    the fund did not pay out - the cession changed. Whether it belongs inside
+    the AV roll-forward at all is a treaty question for the team.
 """
 
 import numbers
@@ -109,11 +86,9 @@ from google.cloud import bigquery
 
 CREDS = '../converge-database-0331482f2ee5.json'
 
-# Differences below this are float64 noise from the quota-share
-# multiplications, not reconciling items.
-ROUNDING_TOL = 0.005
-
 # (bigquery table, output column) for every withdrawal source.
+# Add a non-renewal table here if ACL exposes one - that alone would move
+# category B out of the break.
 TXN_SOURCES = [
     ('full_surrenders',    'full_surrender'),
     ('cancellations',      'cancellation'),
@@ -125,6 +100,8 @@ TXN_SOURCES = [
     ('death_claims',       'death_claims'),
 ]
 
+# surrender_fees is deliberately excluded - it is a charge, not a fund
+# movement. check_rollforward_definition() re-tests that each month.
 OUTFLOW_COLS = [
     'full_surrender', 'cancellation', 'aiw', 'rmd', 'penalty_free',
     'partial_surrender', 'death_claims',
@@ -136,18 +113,6 @@ COLUMNS = [
     'aiw', 'rmd', 'penalty_free', 'partial_surrender', 'death_claims',
     'end_fund_value', 'qs', 'beginning_reserve_stat', 'end_reserve_stat',
     'new_policy_check', 'val_code', 'reins_flag', 'left_extract', 'txn_count',
-    'is_recaptured', 'recapture_date', 'recaptured_av',
-]
-
-STATUS_LABELS = {0: "Existing", 1: "New", 2: "Left extract"}
-
-# Columns shown on the flagged tabs.
-FLAG_COLS = [
-    "policy_number", "status", "needs_review", "is_recaptured",
-    "recapture_date", "recaptured_av",
-    "val_code", "reins_flag", "qs", "left_extract", "txn_count", "date_issued",
-    "beginning_fund_value", "inflow", "outflow",
-    "exp_av", "end_fund_value", "diff", "beginning_reserve_stat",
 ]
 
 
@@ -178,14 +143,12 @@ def create_query(month, dataset='aclico'):
     txn_pivot = ",\n        ".join(
         f"SUM(IF(bucket = '{col}', amt, 0)) AS {col}" for _, col in TXN_SOURCES
     )
+    # Every money column below is multiplied by the policy's quota share.
     txn_cols = ",\n      ".join(
         f"IFNULL(t.{col} * quota_share(s.reins_flag), 0) AS {col}"
         for _, col in TXN_SOURCES
     )
-    # Identical in all three sections.
-    rec_cols = """r.policy_number IS NOT NULL                                AS is_recaptured,
-      r.recapture_date                                          AS recapture_date,
-      IFNULL(r.recaptured_av, 0)                                AS recaptured_av"""
+    txn_zero = ",\n      ".join(f"0 AS {col}" for _, col in TXN_SOURCES)
 
     return f'''
     -- ============================================================
@@ -200,6 +163,7 @@ def create_query(month, dataset='aclico'):
     );
 
     WITH
+    -- Prior and current month seriatim, isolated once each.
     bom AS (
       SELECT * FROM `{dataset}.seriatim_values` WHERE set_month = "{beginning_month}"
     ),
@@ -208,7 +172,9 @@ def create_query(month, dataset='aclico'):
     ),
 
     -- All eight withdrawal sources, scanned once each and pivoted.
-    -- txn_count says whether ANY claim activity was recorded this month.
+    -- txn_count is the whole point of this CTE: it says whether ANY claim
+    -- activity was recorded for the policy this month. A departure with
+    -- txn_count = 0 left the ceded block with no claim behind it.
     txn_raw AS (
       {txn_union}
     ),
@@ -219,31 +185,14 @@ def create_query(month, dataset='aclico'):
         COUNT(*) AS txn_count
       FROM txn_raw
       GROUP BY policy_number
-    ),
-
-    -- Recaptures effective on or before this month end. Grouped because a
-    -- policy can be recaptured more than once - the settlement workbook shows
-    -- cession dropping 0.9 -> 0.25 rather than to zero on some policies, so a
-    -- further recapture later is possible. MIN() takes the first effective
-    -- date; SUM() totals the AV released to date.
-    --
-    -- recaptured_av is already at the Converge share - do NOT multiply by
-    -- quota_share() again.
-    recapture AS (
-      SELECT
-        policy_number,
-        MIN(renew_date)    AS recapture_date,
-        SUM(recaptured_av) AS recaptured_av
-      FROM `{dataset}.recaptures`
-      WHERE renew_date <= LAST_DAY(PARSE_DATE('%Y%m', "{month}"))
-      GROUP BY policy_number
     )
 
     -- ----------------------------------------------------------------
-    -- SECTION 1: in BOTH months.
-    -- purchase_price and interest_earned are cumulative, so premium and
-    -- interest are deltas. They can be negative when a transaction is
-    -- reversed - do not abs() them downstream.
+    -- SECTION 1: policies present in BOTH months.
+    -- purchase_price and interest_earned are cumulative inception-to-date,
+    -- so premium and interest are current-minus-prior deltas. The deltas can
+    -- legitimately be NEGATIVE when a transaction is reversed - do not wrap
+    -- them in ABS anywhere downstream.
     -- ----------------------------------------------------------------
     SELECT
       p.policy_number,
@@ -265,17 +214,16 @@ def create_query(month, dataset='aclico'):
       e.val_code                                                         AS val_code,
       s.reins_flag                                                       AS reins_flag,
       0                                                                  AS left_extract,
-      IFNULL(t.txn_count, 0)                                             AS txn_count,
-      {rec_cols}
+      IFNULL(t.txn_count, 0)                                             AS txn_count
 
     FROM bom s
     JOIN `{dataset}.policy` p ON p.policy_number = s.policy_number
     JOIN eom e                ON e.policy_number = s.policy_number
     LEFT JOIN txn t           ON t.policy_number = s.policy_number
-    LEFT JOIN recapture r     ON r.policy_number = s.policy_number
 
     -- ----------------------------------------------------------------
-    -- SECTION 2: NEW ISSUES. Cumulative equals the month's activity.
+    -- SECTION 2: NEW ISSUES - in the current month only.
+    -- Cumulative equals the month's activity, so no delta is taken.
     -- ----------------------------------------------------------------
     UNION ALL
     SELECT
@@ -296,23 +244,30 @@ def create_query(month, dataset='aclico'):
       s.val_code                                                         AS val_code,
       s.reins_flag                                                       AS reins_flag,
       0                                                                  AS left_extract,
-      IFNULL(t.txn_count, 0)                                             AS txn_count,
-      {rec_cols}
+      IFNULL(t.txn_count, 0)                                             AS txn_count
 
     FROM eom s
     JOIN `{dataset}.policy` p ON p.policy_number = s.policy_number
     LEFT JOIN txn t           ON t.policy_number = s.policy_number
-    LEFT JOIN recapture r     ON r.policy_number = s.policy_number
     WHERE p.date_issued >= '{parse_year_month(month)}'
       AND NOT EXISTS (SELECT 1 FROM bom b WHERE b.policy_number = s.policy_number)
 
     -- ----------------------------------------------------------------
     -- SECTION 3: LEFT THE EXTRACT - in the prior month, gone this month.
     --
-    -- These used to disappear into IFNULL(...) = 0. There is no current-month
-    -- row, so no final interest is knowable and no ending AV exists: the
-    -- beginning AV runs off to zero. val_code and reins_flag come from the
-    -- PRIOR month - the only copy left. This is where recaptures land.
+    -- These are the rows that used to disappear into IFNULL(...) = 0. There
+    -- is no current-month row, so no final-month interest is knowable and no
+    -- ending AV exists: beginning AV runs off to zero. That run-off is real,
+    -- but it is NOT a reconciling error, so it must be identified rather than
+    -- left inside diff.
+    --
+    -- val_code and reins_flag come from the PRIOR month - they are the only
+    -- copy left, and without them the exception list is a page of NULLs.
+    --
+    -- 202607: 306 such policies, 11,708,135.71 of ceded AV. 112 were treaty
+    -- recaptures (reins code P/V/AF/3C -> PR/VR/AFR/3A, and the extract
+    -- carries no "-R" codes at all, so they vanish). The other 194 had
+    -- txn_count = 0 - gone with no claim recorded.
     -- ----------------------------------------------------------------
     UNION ALL
     SELECT
@@ -333,13 +288,11 @@ def create_query(month, dataset='aclico'):
       s.val_code                                                         AS val_code,
       s.reins_flag                                                       AS reins_flag,
       1                                                                  AS left_extract,
-      IFNULL(t.txn_count, 0)                                             AS txn_count,
-      {rec_cols}
+      IFNULL(t.txn_count, 0)                                             AS txn_count
 
     FROM bom s
     JOIN `{dataset}.policy` p ON p.policy_number = s.policy_number
     LEFT JOIN txn t           ON t.policy_number = s.policy_number
-    LEFT JOIN recapture r     ON r.policy_number = s.policy_number
     WHERE NOT EXISTS (SELECT 1 FROM eom e WHERE e.policy_number = s.policy_number)
 
     ORDER BY policy_number
@@ -368,13 +321,11 @@ def run_avrf_analysis(set_month, dataset='aclico', creds=CREDS, out_path=None):
 
 
 def add_rollforward(df):
-    """Attach inflow / outflow / exp_av / diff / status / flagged / needs_review.
+    """Attach inflow / outflow / exp_av / diff / status / break_category.
 
-    No .abs() anywhere - a negative inflow or outflow is a reversal and must
-    stay negative.
-
-    Recapture deliberately does not enter exp_av. It labels the difference; it
-    is not a component of it.
+    No .abs() anywhere. A negative inflow or outflow is a reversal and must
+    stay negative; abs() would turn a refund into a payment and double the
+    error. See the module docstring, item 3.
     """
     df = df.copy()
     df['inflow'] = df['premium'] + df['interest_earned']
@@ -382,29 +333,47 @@ def add_rollforward(df):
     df['exp_av'] = df['beginning_fund_value'] + df['inflow'] - df['outflow']
     df['diff'] = df['end_fund_value'] - df['exp_av']
     df['status'] = _derive_status(df)
-    df['flagged'] = df['diff'].abs() > ROUNDING_TOL
-
-    recaptured = df.get('is_recaptured', False)
-    if not isinstance(recaptured, pd.Series):
-        recaptured = pd.Series(False, index=df.index)
-    df['is_recaptured'] = recaptured.fillna(False).astype(bool)
-
-    # The only column anyone has to act on.
-    df['needs_review'] = df['flagged'] & ~df['is_recaptured']
+    df['break_category'] = _derive_break_category(df)
     return df
 
 
-def _derive_status(df):
-    """Existing / New / Left extract from the query flag, plus Run-off.
+# ======================================================================
+# CLASSIFICATION
+# ======================================================================
+FLAG_THRESHOLD = 1_000.00
+ROUNDING_TOL = 0.005
 
-    "Run-off in extract" = still listed this month but AV went to zero, i.e.
-    a full surrender that stays on the seriatim. Distinct from having left.
-    """
+STATUS_LABELS = {0: "Existing", 1: "New", 2: "Left extract"}
+
+# The bridge categories. Everything except UNEXPLAINED is a known route out of
+# the ceded block; UNEXPLAINED is the only one that is a reconciliation
+# problem, and it is the number to quote as "the break".
+CAT_NONE = "0. No break"
+CAT_LEFT_NO_CLAIM = "A. Left extract - no claim recorded"
+CAT_LEFT_WITH_CLAIM = "B. Left extract - claim recorded, AV not covered"
+CAT_REVERSAL = "C. Reversal in the month"
+CAT_UNEXPLAINED = "D. Unexplained - investigate"
+
+FLAG_COLS = [
+    "policy_number", "status", "break_category", "val_code", "reins_flag",
+    "txn_count", "beginning_fund_value", "inflow", "outflow",
+    "exp_av", "end_fund_value", "diff",
+]
+
+EXCEPTION_COLS = [
+    "policy_number", "val_code", "reins_flag", "date_issued", "qs",
+    "txn_count", "beginning_fund_value", "beginning_reserve_stat", "diff",
+]
+
+
+def _derive_status(df):
     status = (
         pd.to_numeric(df["new_policy_check"], errors="coerce")
         .map(STATUS_LABELS)
         .fillna("Unknown")
     )
+    # Still listed in the extract but run off to zero AV - a full surrender
+    # that remains on the seriatim. Distinct from having left the extract.
     if "left_extract" in df.columns:
         runoff = (
             (pd.to_numeric(df["left_extract"], errors="coerce") == 0)
@@ -415,20 +384,33 @@ def _derive_status(df):
     return status
 
 
-# ======================================================================
-# SUMMARY
-# ======================================================================
+def _derive_break_category(df):
+    left = pd.to_numeric(df.get("left_extract", 0), errors="coerce").fillna(0) == 1
+    txn = pd.to_numeric(df.get("txn_count", 0), errors="coerce").fillna(0)
+    is_break = df["diff"].abs() > ROUNDING_TOL
+
+    reversal = (df["inflow"] < -ROUNDING_TOL) | (df["outflow"] < -ROUNDING_TOL)
+
+    cat = pd.Series(CAT_UNEXPLAINED, index=df.index, dtype=object)
+    cat = cat.mask(left & (txn == 0), CAT_LEFT_NO_CLAIM)
+    cat = cat.mask(left & (txn > 0), CAT_LEFT_WITH_CLAIM)
+    cat = cat.mask(~left & reversal, CAT_REVERSAL)
+    return cat.mask(~is_break, CAT_NONE)
+
+
 @dataclass
 class AVRFSummary:
     set_month: str
+    threshold: float
     headline: dict = field(default_factory=dict)
-    needs_review: pd.DataFrame = field(default_factory=pd.DataFrame)
+    bridge: pd.DataFrame = field(default_factory=pd.DataFrame)
     flagged: pd.DataFrame = field(default_factory=pd.DataFrame)
+    exceptions: pd.DataFrame = field(default_factory=pd.DataFrame)
     detail: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def print_report(self) -> None:
         h = self.headline
-        w = 68
+        w = 76
         print("=" * w)
         print(f"  AVRF SUMMARY - ACLICO MYGA {self.set_month}")
         print("=" * w)
@@ -436,7 +418,6 @@ class AVRFSummary:
         print(f"  New issues                    {h['new_policies']:>18,}")
         print(f"  Run-off in extract            {h['runoff_policies']:>18,}")
         print(f"  Left the extract              {h['left_extract']:>18,}")
-        print(f"  Recaptured                    {h['recaptured_policies']:>18,}")
         print()
         print(f"  Beginning AV                  {h['beginning_av']:>18,.2f}")
         print(f"  + Inflow                      {h['inflow']:>18,.2f}")
@@ -444,39 +425,34 @@ class AVRFSummary:
         print(f"  = Expected end AV             {h['expected_av']:>18,.2f}")
         print(f"    Actual end AV               {h['ending_av']:>18,.2f}")
         print()
-        print(f"  TOTAL DIFFERENCE              {h['total_diff']:>18,.2f}")
-        print(f"  Policies flagged              {h['flagged_policies']:>18,}")
-        print(f"    of which recaptured         {h['flagged_recaptured']:>18,}"
-              f"   {h['recaptured_diff']:>16,.2f}")
+        print(f"  Total difference              {h['total_diff']:>18,.2f}")
         print("-" * w)
-        print(f"  NEEDS REVIEW                  {h['needs_review']:>18,}"
-              f"   {h['needs_review_diff']:>16,.2f}")
+        print("  BRIDGE - how the difference is accounted for")
         print("-" * w)
-        if self.needs_review.empty:
-            print("  Nothing to review - every flagged policy is a recapture.")
+        if self.bridge.empty:
+            print("  No differences above tolerance.")
         else:
-            show = self.needs_review.head(15).copy()
-            cols = ["policy_number", "status", "val_code", "reins_flag",
-                    "left_extract", "txn_count", "beginning_fund_value", "diff"]
-            cols = [c for c in cols if c in show.columns]
-            for c in ("beginning_fund_value", "diff"):
-                if c in show.columns:
-                    show[c] = show[c].map(lambda v: f"{v:,.2f}")
-            print(show[cols].to_string(index=False))
-            if len(self.needs_review) > 15:
-                print(f"  ... and {len(self.needs_review) - 15} more on the "
-                      "'Needs review' tab")
-        if h['recaptured_still_ceded']:
-            print("-" * w)
-            print(f"  WARNING: {h['recaptured_still_ceded']} policies are "
-                  "recaptured but still in the extract.")
-            print("  Partial recapture is possible (cession 0.9 -> 0.25), but")
-            print("  confirm with ACL rather than assuming.")
+            b = self.bridge.copy()
+            b["diff"] = b["diff"].map(lambda v: f"{v:,.2f}")
+            b["beginning_av"] = b["beginning_av"].map(lambda v: f"{v:,.2f}")
+            print(b.to_string())
+        print("-" * w)
+        print(f"  TRUE UNEXPLAINED BREAK        {h['unexplained_diff']:>18,.2f}"
+              f"   ({h['unexplained_policies']} policies)")
         print("=" * w)
+        if not self.exceptions.empty:
+            print(f"  {len(self.exceptions)} policies left the extract with NO claim "
+                  f"recorded, carrying {h['left_no_claim_av']:,.2f} of ceded AV.")
+            print("  These need a disposition from ACL. Top 10 by AV:")
+            top = self.exceptions.nlargest(10, "beginning_fund_value").copy()
+            for c in ("beginning_fund_value", "beginning_reserve_stat", "diff"):
+                top[c] = top[c].map(lambda v: f"{v:,.2f}")
+            print(top.to_string(index=False))
+            print("=" * w)
 
     def to_excel(self, out_path=None, include_detail=True):
         from openpyxl import Workbook
-        from openpyxl.styles import Border, Font, Side
+        from openpyxl.styles import Alignment, Border, Font, Side
 
         if out_path is None:
             out_path = f"AVRF_{self.set_month}.xlsx"
@@ -526,46 +502,60 @@ class AVRFSummary:
         label(4, "New issues", h["new_policies"], "#,##0")
         label(5, "Run-off in extract", h["runoff_policies"], "#,##0")
         label(6, "Left the extract", h["left_extract"], "#,##0")
-        label(7, "Recaptured", h["recaptured_policies"], "#,##0")
 
-        label(9, "Beginning AV",
+        label(8, "Beginning AV",
               f'=SUM({ref("beginning_fund_value")})' if live
               else h["beginning_av"], money)
-        label(10, "+ Inflow",
+        label(9, "+ Inflow",
               f'=SUM({ref("inflow")})' if live else h["inflow"], money)
-        label(11, "- Outflow",
+        label(10, "- Outflow",
               f'=SUM({ref("outflow")})' if live else h["outflow"], money)
         # No leading "=" on a label: openpyxl writes any string starting with
         # "=" as a formula, which evaluates to #VALUE!.
-        label(12, "Expected end AV", "=B9+B10-B11", money, bold)
-        label(13, "Actual end AV",
+        label(11, "Expected end AV", "=B8+B9-B10", money, bold)
+        label(12, "Actual end AV",
               f'=SUM({ref("end_fund_value")})' if live else h["ending_av"],
               money, bold)
         for col in ("A", "B"):
-            ws[f"{col}12"].border = rule
+            ws[f"{col}11"].border = rule
 
-        # Summed from the detail rather than B13-B12: subtracting two
+        # Summed from the detail rather than B12-B11: subtracting two
         # nine-figure totals loses cents to float rounding.
-        label(15, "TOTAL DIFFERENCE",
+        label(14, "Total difference",
               f'=SUM({ref("diff")})' if live else h["total_diff"], money, bold)
-        label(16, "Policies flagged", h["flagged_policies"], "#,##0")
-        label(17, "  of which recaptured", h["flagged_recaptured"], "#,##0",
-              base, note="Explained - cession changed, no claim should exist.")
-        label(18, "  their difference", h["recaptured_diff"], money)
-        label(20, "NEEDS REVIEW", h["needs_review"], "#,##0", bold,
-              note="See the 'Needs review' tab. These are the only ones to work.")
-        label(21, "  their difference", h["needs_review_diff"], money, bold)
 
-        if h["recaptured_still_ceded"]:
-            label(23, "WARNING: recaptured but still in extract",
-                  h["recaptured_still_ceded"], "#,##0", bold,
-                  note="Partial recapture is possible - confirm with ACL.")
+        r = 16
+        ws.cell(row=r, column=1, value="BRIDGE").font = bold
+        r += 1
+        hdr = ["category", "policies", "beginning_av", "diff"]
+        for j, name in enumerate(hdr, start=1):
+            c = ws.cell(row=r, column=j, value=name)
+            c.font = bold
+            c.border = Border(bottom=Side(style="thin"))
+        r += 1
+        for cat, row in self.bridge.iterrows():
+            ws.cell(row=r, column=1, value=str(cat)).font = base
+            ws.cell(row=r, column=2, value=int(row["policies"])).font = base
+            for j, k in ((3, "beginning_av"), (4, "diff")):
+                c = ws.cell(row=r, column=j, value=float(row[k]))
+                c.font, c.number_format = base, money
+            r += 1
 
-        for col, wd in {"A": 38, "B": 20, "C": 52}.items():
+        r += 1
+        label(r, "TRUE UNEXPLAINED BREAK", h["unexplained_diff"], money, bold,
+              note=f"{h['unexplained_policies']} policies. This is the figure "
+                   "to quote as the reconciliation break.")
+
+        for col, wd in {"A": 40, "B": 18, "C": 20, "D": 18, "E": 14,
+                        "F": 14, "G": 20, "H": 16, "I": 16, "J": 16,
+                        "K": 16, "L": 16}.items():
             ws.column_dimensions[col].width = wd
 
-        self._write_frame(wb, "Needs review", self.needs_review, money, base, bold)
-        self._write_frame(wb, "Flagged - all", self.flagged, money, base, bold)
+        self._write_frame(wb, "Exceptions - no claim", self.exceptions,
+                          money, base, bold)
+        self._write_frame(wb, "Flagged policies", self.flagged,
+                          money, base, bold)
+        self._write_values(wb, money, base, bold)
 
         wb.save(out_path)
         print(f"Results saved to {out_path}  ({' + '.join(wb.sheetnames)})")
@@ -575,7 +565,7 @@ class AVRFSummary:
         from openpyxl.styles import Border, Side
         from openpyxl.utils import get_column_letter
         ws = wb.create_sheet(sheet[:31])
-        if df is None or df.empty:
+        if df.empty:
             ws.cell(row=1, column=1, value="None.").font = base
             return
         for j, name in enumerate(df.columns, start=1):
@@ -583,20 +573,52 @@ class AVRFSummary:
             c.font = bold
             c.border = Border(bottom=Side(style="thin"))
             ws.column_dimensions[get_column_letter(j)].width = max(
-                12, min(len(str(name)) + 3, 30))
+                12, min(len(str(name)) + 3, 34))
         for row in df.itertuples(index=False, name=None):
             ws.append([v.item() if hasattr(v, "item") else v for v in row])
         for j, name in enumerate(df.columns, start=1):
             if name in ("beginning_fund_value", "inflow", "outflow", "exp_av",
-                        "end_fund_value", "diff", "beginning_reserve_stat",
-                        "recaptured_av"):
+                        "end_fund_value", "diff", "beginning_reserve_stat"):
                 for rr in range(2, len(df) + 2):
                     ws.cell(row=rr, column=j).number_format = money
-            if name in ("date_issued", "recapture_date"):
-                for rr in range(2, len(df) + 2):
-                    ws.cell(row=rr, column=j).number_format = "yyyy-mm-dd"
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = f"A1:{get_column_letter(len(df.columns))}{len(df) + 1}"
+
+    def _write_values(self, wb, money, base, bold):
+        h = self.headline
+        ws = wb.create_sheet("Summary (values)")
+        ws.sheet_view.showGridLines = False
+        rows = [
+            ("Policies in force", h["policies_in_force"], "#,##0"),
+            ("New issues", h["new_policies"], "#,##0"),
+            ("Run-off in extract", h["runoff_policies"], "#,##0"),
+            ("Left the extract", h["left_extract"], "#,##0"),
+            ("", None, None),
+            ("Beginning AV", h["beginning_av"], money),
+            ("+ Inflow", h["inflow"], money),
+            ("- Outflow", h["outflow"], money),
+            ("Expected end AV", h["expected_av"], money),
+            ("Actual end AV", h["ending_av"], money),
+            ("", None, None),
+            ("Total difference", h["total_diff"], money),
+            ("Left extract, no claim", h["left_no_claim_diff"], money),
+            ("Left extract, with claim", h["left_with_claim_diff"], money),
+            ("Reversals", h["reversal_diff"], money),
+            ("TRUE UNEXPLAINED BREAK", h["unexplained_diff"], money),
+            ("Policies unexplained", h["unexplained_policies"], "#,##0"),
+        ]
+        for i, (text, val, fmt) in enumerate(rows, start=1):
+            font = bold if text.startswith(
+                ("Total", "Expected", "Actual", "Policies", "TRUE")) else base
+            c = ws.cell(row=i, column=1, value=text)
+            c.font = font
+            if val is not None:
+                v = ws.cell(row=i, column=2,
+                            value=float(val) if fmt == money else int(val))
+                v.font = font
+                v.number_format = fmt
+        ws.column_dimensions["A"].width = 32
+        ws.column_dimensions["B"].width = 20
 
     def _write_detail(self, wb, money, base, bold):
         from openpyxl.styles import Border, Side
@@ -621,7 +643,7 @@ class AVRFSummary:
         not_money = {
             "policy_number", "date_issued", "val_code", "reins_flag", "qs",
             "new_policy_check", "status", "left_extract", "txn_count",
-            "flagged", "is_recaptured", "recapture_date", "needs_review",
+            "break_category",
         }
 
         def is_money(name):
@@ -644,7 +666,7 @@ class AVRFSummary:
             if is_money(name):
                 for r in range(2, n + 2):
                     ws.cell(row=r, column=j).number_format = money
-            if name in ("date_issued", "recapture_date"):
+            if name == "date_issued":
                 for r in range(2, n + 2):
                     ws.cell(row=r, column=j).number_format = "yyyy-mm-dd"
             ws.column_dimensions[letter].width = max(12, min(len(name) + 3, 30))
@@ -655,65 +677,85 @@ class AVRFSummary:
                 for j, name in enumerate(cols, start=1)}
 
 
-def summarize_avrf(source, set_month, rounding_tol=ROUNDING_TOL):
-    """Roll an AVRF detail frame up to a summary plus the review list."""
+def summarize_avrf(source, set_month, threshold=FLAG_THRESHOLD,
+                   rounding_tol=ROUNDING_TOL):
+    """Roll an AVRF detail frame up to a management summary with a bridge."""
     df = pd.read_excel(source) if isinstance(source, str) else source.copy()
     _validate(df)
 
-    if "needs_review" not in df.columns:
+    if "status" not in df.columns or "break_category" not in df.columns:
         df = add_rollforward(df)
 
     diff = df["diff"]
-    is_break = diff.abs() > rounding_tol
+    abs_diff = diff.abs()
+    is_break = abs_diff > rounding_tol
     in_force = df["beginning_fund_value"] > 0
-    rec = df["is_recaptured"]
-    review = df["needs_review"]
-    left = pd.to_numeric(df.get("left_extract", 0), errors="coerce").fillna(0) == 1
 
     n_zero_bom = int((~in_force).sum())
     if n_zero_bom:
         print(
-            f"Note: {n_zero_bom} rows have beginning AV = 0. They are excluded "
-            "from the in-force count but included in the totals."
+            f"Note: {n_zero_bom} rows have beginning AV = 0 (new issues). They "
+            "are excluded from the in-force count but included in the totals."
         )
+
+    bridge = (
+        df.loc[is_break]
+        .groupby("break_category")
+        .agg(policies=("policy_number", "size"),
+             beginning_av=("beginning_fund_value", "sum"),
+             diff=("diff", "sum"))
+        .round(2)
+    )
+
+    def cat_sum(cat):
+        m = is_break & (df["break_category"] == cat)
+        return float(diff[m].sum())
+
+    unexpl = is_break & (df["break_category"] == CAT_UNEXPLAINED)
+    no_claim = df["break_category"] == CAT_LEFT_NO_CLAIM
 
     headline = {
         "policies_in_force": int(in_force.sum()),
         "new_policies": int((df["status"] == "New").sum()),
         "runoff_policies": int((df["status"] == "Run-off in extract").sum()),
         "left_extract": int((df["status"] == "Left extract").sum()),
-        "recaptured_policies": int(rec.sum()),
         "beginning_av": float(df["beginning_fund_value"].sum()),
         "inflow": float(df["inflow"].sum()),
         "outflow": float(df["outflow"].sum()),
         "expected_av": float(df["exp_av"].sum()),
         "ending_av": float(df["end_fund_value"].sum()),
         "total_diff": float(diff[is_break].sum()),
-        "flagged_policies": int(is_break.sum()),
-        "flagged_recaptured": int((is_break & rec).sum()),
-        "recaptured_diff": float(diff[is_break & rec].sum()),
-        "needs_review": int(review.sum()),
-        "needs_review_diff": float(diff[review].sum()),
-        # Recaptured yet still being ceded - possible with a partial
-        # recapture, but worth querying rather than assuming.
-        "recaptured_still_ceded": int((rec & ~left).sum()),
+        "total_abs_diff": float(abs_diff[is_break].sum()),
+        "break_policies": int(is_break.sum()),
+        "left_no_claim_diff": cat_sum(CAT_LEFT_NO_CLAIM),
+        "left_with_claim_diff": cat_sum(CAT_LEFT_WITH_CLAIM),
+        "reversal_diff": cat_sum(CAT_REVERSAL),
+        "unexplained_diff": float(diff[unexpl].sum()),
+        "unexplained_policies": int(unexpl.sum()),
+        "left_no_claim_av": float(df.loc[no_claim, "beginning_fund_value"].sum()),
+        "flagged_policies": int((abs_diff > threshold).sum()),
     }
 
-    cols = [c for c in FLAG_COLS if c in df.columns]
-    flagged = (df.loc[is_break].reindex(columns=cols)
-               .sort_values(["needs_review", "diff"],
-                            key=lambda s: s.abs() if s.name == "diff" else s,
-                            ascending=[False, False])
-               .reset_index(drop=True))
-    needs_review = (df.loc[review].reindex(columns=cols)
-                    .sort_values("diff", key=abs, ascending=False)
-                    .reset_index(drop=True))
+    flagged = (
+        df.loc[abs_diff > threshold]
+        .reindex(columns=[c for c in FLAG_COLS if c in df.columns])
+        .sort_values("diff", key=abs, ascending=False)
+        .reset_index(drop=True)
+    )
+    exceptions = (
+        df.loc[no_claim]
+        .reindex(columns=[c for c in EXCEPTION_COLS if c in df.columns])
+        .sort_values("beginning_fund_value", ascending=False)
+        .reset_index(drop=True)
+    )
 
     return AVRFSummary(
         set_month=set_month,
+        threshold=threshold,
         headline=headline,
-        needs_review=needs_review,
+        bridge=bridge,
         flagged=flagged,
+        exceptions=exceptions,
         detail=df,
     )
 
@@ -728,12 +770,6 @@ def _validate(df):
     if missing:
         raise KeyError(f"AVRF frame is missing required columns: {sorted(missing)}")
 
-    if "is_recaptured" not in df.columns:
-        print(
-            "WARNING: no is_recaptured column - the recapture join did not run. "
-            "Every departure will show as NEEDS REVIEW."
-        )
-
     if "diff" in df.columns and df["diff"].isna().any():
         raise ValueError(
             f"{int(df['diff'].isna().sum())} policies have a null 'diff'. Nulls "
@@ -744,13 +780,13 @@ def _validate(df):
     if dupes:
         print(
             f"WARNING: {dupes} duplicate policy_number rows will double-count "
-            "in the totals. Check `aclico.policy`, `seriatim_values`, and that "
-            "`aclico.recaptures` has at most one row per policy per renew_date."
+            "in the totals. Check for multiple rows per policy in "
+            "`aclico.policy` or `seriatim_values`."
         )
 
 
 # ======================================================================
-# OPTIONAL CHECKS - call these when a month looks wrong
+# MONTHLY CHECKS
 # ======================================================================
 def tie_to_settlement(seriatim_path, expected_ceded_reserve):
     """Confirm the extract's ceded stat reserve ties to the settlement sheet.
@@ -805,11 +841,11 @@ def check_seriatim_identity(seriatim_path):
 
 
 def check_rollforward_definition(df):
-    """Test whether surrender_fees belongs in outflow.
+    """Test alternative outflow definitions against the actual ending AV.
 
-    202607: withdrawals-only ties to 0.00, including surrender fees breaks 32
-    policies by 23,316.43. Restricted to policies present in both months, or
-    the departures swamp the comparison.
+    exp_av excludes surrender_fees. Re-run whenever a month's break jumps -
+    it separates a formula problem from a data problem. Restrict to policies
+    present in both months, or the departures swamp the comparison.
     """
     d = df[pd.to_numeric(df.get("left_extract", 0), errors="coerce").fillna(0) == 0]
     base = d["beginning_fund_value"] + d["inflow"]
@@ -831,24 +867,37 @@ def check_rollforward_definition(df):
     return pd.DataFrame(rows).sort_values("total_abs_diff").reset_index(drop=True)
 
 
-def check_recapture_coverage(df):
-    """Departures with no claim and no recapture row - the real review list.
+def tag_recaptures(df, settlement_path):
+    """Split 'left extract, no claim' into treaty recaptures and the rest.
 
-    Run after a load of `aclico.recaptures` to confirm the table covers the
-    month. On 202607 this returns empty: all 306 departures are recaptures.
+    The recapture list lives in the settlement workbook, not in BigQuery, so
+    this is a separate optional step. Recaptured policies leave because the
+    cession changed (reins code P/V/AF/3C -> PR/VR/AFR/3A, and the extract
+    carries no "-R" codes), not because the fund paid out - so they are a
+    treaty movement, not a reconciling item.
+
+    Adds a `recaptured` column and refines break_category in place.
     """
-    left = pd.to_numeric(df.get("left_extract", 0), errors="coerce").fillna(0) == 1
-    txn = pd.to_numeric(df.get("txn_count", 0), errors="coerce").fillna(0)
-    gap = left & (txn == 0) & ~df["is_recaptured"] & (df["beginning_fund_value"] > 0)
-    out = df.loc[gap, ["policy_number", "val_code", "reins_flag", "qs",
-                       "beginning_fund_value", "diff"]]
-    print(f"  {len(out)} departures with no claim and no recapture row"
-          f"   {out['beginning_fund_value'].sum():,.2f} of ceded AV")
-    return out.sort_values("beginning_fund_value", ascending=False)
+    rec = pd.read_excel(settlement_path, 'Converge Monthly Recapture')
+    key = pd.to_numeric(
+        rec['Policy ID'].astype(str).str.replace('-', '', regex=False),
+        errors='coerce')
+    recaptured = set(key[rec['Recapture This Month'] == 'Y'].dropna().astype('int64'))
+
+    out = df.copy()
+    out['recaptured'] = pd.to_numeric(
+        out['policy_number'], errors='coerce').isin(recaptured)
+    out.loc[out['recaptured'] & (out['break_category'] == CAT_LEFT_NO_CLAIM),
+            'break_category'] = "A1. Left extract - treaty recapture"
+    out.loc[~out['recaptured'] & (out['break_category'] == CAT_LEFT_NO_CLAIM),
+            'break_category'] = "A2. Left extract - no claim, no recapture"
+    print(f"  {int(out['recaptured'].sum())} policies flagged as recaptured "
+          f"this month")
+    return out
 
 
 def status_breakdown(df):
-    """Where the difference sits by status - run this first when a month looks off."""
+    """Where the break sits by status - run this first when a month looks off."""
     d = df if "status" in df.columns else add_rollforward(df)
     return (
         d.groupby("status")
